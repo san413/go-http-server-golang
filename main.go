@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -50,10 +51,26 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(users)
 }
 
+func isValidEmail(email string) bool {
+	re := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return re.MatchString(email)
+}
+
 func createUser(w http.ResponseWriter, r *http.Request) {
 	var user User
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, `{"error": "Invalid request payload"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validation
+	if user.Name == "" {
+		http.Error(w, `{"error": "Name is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if user.Email == "" || !isValidEmail(user.Email) {
+		http.Error(w, `{"error": "Invalid email format"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -66,6 +83,7 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(user)
 }
+
 func updateUser(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -86,7 +104,18 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only update non-zero values
+	// Validation
+	if updateData.Name != "" && len(updateData.Name) < 3 {
+		http.Error(w, `{"error": "Name must be at least 3 characters"}`, http.StatusBadRequest)
+		return
+	}
+
+	if updateData.Email != "" && !isValidEmail(updateData.Email) {
+		http.Error(w, `{"error": "Invalid email format"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Only update fields that are provided
 	if updateData.Name != "" {
 		user.Name = updateData.Name
 	}
