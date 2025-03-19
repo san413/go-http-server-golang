@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 
 	"github.com/gorilla/mux"
@@ -27,7 +28,7 @@ func connectDB() {
 		log.Fatal("❌ DATABASE_URL environment variable is not set")
 	}
 
-	fmt.Println("🔍 Connecting to DB with DSN:", dsn)
+	fmt.Println("🔍 Connecting to DB...")
 	var err error
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
@@ -65,7 +66,6 @@ func createUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(user)
 }
-
 func updateUser(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -80,10 +80,20 @@ func updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
+	var updateData User
+	if err := json.NewDecoder(r.Body).Decode(&updateData); err != nil {
 		http.Error(w, `{"error": "Invalid request payload"}`, http.StatusBadRequest)
 		return
 	}
+
+	// Only update non-zero values
+	if updateData.Name != "" {
+		user.Name = updateData.Name
+	}
+	if updateData.Email != "" {
+		user.Email = updateData.Email
+	}
+
 	db.Save(&user)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -120,7 +130,30 @@ func main() {
 	r.HandleFunc("/api/users/{id}", updateUser).Methods("PUT")
 	r.HandleFunc("/api/users/{id}", deleteUser).Methods("DELETE")
 
-	port := ":8080"
-	fmt.Println("🚀 Server is running on http://localhost" + port)
-	log.Fatal(http.ListenAndServe(port, r))
+	port := "8080"
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+
+	go func() {
+		fmt.Println("🚀 Server is running on http://localhost:" + port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("❌ Server failed: %v", err)
+		}
+	}()
+
+	// Handle shutdown signals
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+	<-stop
+	fmt.Println("\n🛑 Shutting down server gracefully...")
+
+	// Close database connection
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("❌ Error getting DB connection: %v", err)
+	}
+	sqlDB.Close()
+	fmt.Println("✅ Database connection closed")
 }
